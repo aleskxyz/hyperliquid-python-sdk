@@ -36,6 +36,14 @@ SpotAssetCtx = TypedDict(
 )
 SpotMetaAndAssetCtxs = Tuple[SpotMeta, List[SpotAssetCtx]]
 
+ActivePerpsAssetCtx = TypedDict("ActivePerpsAssetCtx", {"dayNtlVlm": str, "markPx": str, "midPx": Optional[str], "prevDayPx": str, "funding": str, "openInterest": str, "oraclePx": str})
+ActiveSpotAssetCtx = TypedDict("ActiveSpotAssetCtx", {"dayNtlVlm": str, "markPx": str, "midPx": Optional[str], "prevDayPx": str, "circulatingSupply": str})
+ActiveAssetCtx = TypedDict("ActiveAssetCtx", {"coin": str, "ctx": Union[ActivePerpsAssetCtx, ActiveSpotAssetCtx]})
+
+CrossLeverage = TypedDict("CrossLeverage", {"type": Literal["cross"], "value": int})
+IsolatedLeverage = TypedDict("IsolatedLeverage", {"type": Literal["isolated"], "value": int, "rawUsd": str})
+Leverage = Union[CrossLeverage, IsolatedLeverage]
+
 AllMidsSubscription = TypedDict("AllMidsSubscription", {"type": Literal["allMids"]})
 L2BookSubscription = TypedDict("L2BookSubscription", {"type": Literal["l2Book"], "coin": str})
 TradesSubscription = TypedDict("TradesSubscription", {"type": Literal["trades"], "coin": str})
@@ -48,6 +56,8 @@ UserNonFundingLedgerUpdatesSubscription = TypedDict(
     "UserNonFundingLedgerUpdatesSubscription", {"type": Literal["userNonFundingLedgerUpdates"], "user": str}
 )
 WebData2Subscription = TypedDict("WebData2Subscription", {"type": Literal["webData2"], "user": str})
+ActiveAssetCtxSubscription = TypedDict("ActiveAssetCtxSubscription", {"type": Literal["activeAssetCtx"], "coin": str})
+ActiveAssetDataSubscription = TypedDict("ActiveAssetDataSubscription", {"type": Literal["activeAssetData"], "user": str, "coin": str})
 # If adding new subscription types that contain coin's don't forget to handle automatically rewrite name to coin in info.subscribe
 Subscription = Union[
     AllMidsSubscription,
@@ -60,6 +70,8 @@ Subscription = Union[
     UserFundingsSubscription,
     UserNonFundingLedgerUpdatesSubscription,
     WebData2Subscription,
+    ActiveAssetCtxSubscription,
+    ActiveAssetDataSubscription,
 ]
 
 AllMidsData = TypedDict("AllMidsData", {"mids": Dict[str, str]})
@@ -94,6 +106,8 @@ UserEventsData = TypedDict("UserEventsData", {"fills": List[Fill]}, total=False)
 UserEventsMsg = TypedDict("UserEventsMsg", {"channel": Literal["user"], "data": UserEventsData})
 UserFillsData = TypedDict("UserFillsData", {"user": str, "isSnapshot": bool, "fills": List[Fill]})
 UserFillsMsg = TypedDict("UserFillsMsg", {"channel": Literal["userFills"], "data": UserFillsData})
+ActiveAssetData = TypedDict("ActiveAssetData", {"user": str, "coin": str, "leverage": Leverage, "maxTradeSzs": Tuple[float, float], "availableToTrade": Tuple[float, float]})
+
 OtherWsMsg = TypedDict(
     "OtherWsMsg",
     {
@@ -104,7 +118,7 @@ OtherWsMsg = TypedDict(
     },
     total=False,
 )
-WsMsg = Union[AllMidsMsg, L2BookMsg, TradesMsg, UserEventsMsg, PongMsg, UserFillsMsg, OtherWsMsg]
+WsMsg = Union[AllMidsMsg, L2BookMsg, TradesMsg, UserEventsMsg, PongMsg, UserFillsMsg, ActiveAssetCtx, ActiveAssetData, OtherWsMsg]
 
 # b is the public address of the builder, f is the amount of the fee in tenths of basis points. e.g. 10 means 1 basis point
 BuilderInfo = TypedDict("BuilderInfo", {"b": str, "f": int})
