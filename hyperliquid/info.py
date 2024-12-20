@@ -22,6 +22,7 @@ class Info(API):
         spot_meta: Optional[SpotMeta] = None,
     ):
         super().__init__(base_url)
+        self.skip_ws = skip_ws
         if not skip_ws:
             self.ws_manager = WebsocketManager(self.base_url)
             self.ws_manager.start()
@@ -42,6 +43,12 @@ class Info(API):
             name = f'{spot_meta["tokens"][base]["name"]}/{spot_meta["tokens"][quote]["name"]}'
             if name not in self.name_to_coin:
                 self.name_to_coin[name] = spot_info["name"]
+
+    def post(self, url_path: str, payload: Any = None) -> Any:
+        """Override post method to use websocket when available"""
+        if not self.skip_ws and self.ws_manager is not None:
+            return self.ws_manager.post_request(url_path, payload)
+        return super().post(url_path, payload)
 
     def user_state(self, address: str) -> Any:
         """Retrieve trading details about a user.
@@ -511,7 +518,7 @@ class Info(API):
     def subscribe(self, subscription: Subscription, callback: Callable[[Any], None]) -> int:
         if subscription["type"] == "l2Book" or subscription["type"] == "trades" or subscription["type"] == "candle":
             subscription["coin"] = self.name_to_coin[subscription["coin"]]
-        if self.ws_manager is None:
+        if self.skip_ws:
             raise RuntimeError("Cannot call subscribe since skip_ws was used")
         else:
             return self.ws_manager.subscribe(subscription, callback)
@@ -519,7 +526,7 @@ class Info(API):
     def unsubscribe(self, subscription: Subscription, subscription_id: int) -> bool:
         if subscription["type"] == "l2Book" or subscription["type"] == "trades" or subscription["type"] == "candle":
             subscription["coin"] = self.name_to_coin[subscription["coin"]]
-        if self.ws_manager is None:
+        if self.skip_ws:
             raise RuntimeError("Cannot call unsubscribe since skip_ws was used")
         else:
             return self.ws_manager.unsubscribe(subscription, subscription_id)

@@ -46,12 +46,19 @@ class Exchange(API):
         vault_address: Optional[str] = None,
         account_address: Optional[str] = None,
         spot_meta: Optional[SpotMeta] = None,
+        skip_ws: Optional[bool] = True,
     ):
         super().__init__(base_url)
         self.wallet = wallet
         self.vault_address = vault_address
         self.account_address = account_address
-        self.info = Info(base_url, True, meta, spot_meta)
+        self.info = Info(base_url, skip_ws, meta, spot_meta)
+
+    def post(self, url_path: str, payload: Any = None) -> Any:
+        """Override post method to use websocket when available"""
+        if not self.info.skip_ws and self.info.ws_manager is not None:
+            return self.info.ws_manager.post_request(url_path, payload)
+        return super().post(url_path, payload)
 
     def _post_action(self, action, signature, nonce):
         payload = {

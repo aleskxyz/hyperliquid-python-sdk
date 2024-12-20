@@ -3,10 +3,14 @@ import logging
 import threading
 import time
 from collections import defaultdict
+from typing import Dict, Optional
+from queue import Queue
+from threading import Event
+from hyperliquid.utils.signing import get_timestamp_ms
 
 import websocket
 
-from hyperliquid.utils.types import Any, Callable, Dict, List, NamedTuple, Optional, Subscription, Tuple, WsMsg
+from hyperliquid.utils.types import Any, Callable, List, NamedTuple, Subscription, Tuple, WsMsg
 
 ActiveSubscription = NamedTuple("ActiveSubscription", [("callback", Callable[[Any], None]), ("subscription_id", int)])
 
@@ -67,12 +71,14 @@ class WebsocketManager(threading.Thread):
     def __init__(self, base_url):
         super().__init__()
         self.subscription_id_counter = 0
-        self.ws_ready = False
+        self.ws_ready_event = Event()
         self.queued_subscriptions: List[Tuple[Subscription, ActiveSubscription]] = []
         self.active_subscriptions: Dict[str, List[ActiveSubscription]] = defaultdict(list)
         ws_url = "ws" + base_url[len("http") :] + "/ws"
         self.ws = websocket.WebSocketApp(ws_url, on_message=self.on_message, on_open=self.on_open)
         self.ping_sender = threading.Thread(target=self.send_ping)
+        self.post_responses: Dict[int, Queue] = {}
+        self.post_events: Dict[int, Event] = {}
 
     def run(self):
         self.ping_sender.start()
@@ -90,6 +96,14 @@ class WebsocketManager(threading.Thread):
             return
         logging.debug(f"on_message {message}")
         ws_msg: WsMsg = json.loads(message)
+        
+        if ws_msg.get("channel") == "post":
+            msg_id = ws_msg["data"]["id"]
+            if msg_id in self.post_responses:
+                self.post_responses[msg_id].put(ws_msg["data"]["response"])
+                self.post_events[msg_id].set()
+                return
+
         identifier = ws_msg_to_identifier(ws_msg)
         if identifier == "pong":
             logging.debug("Websocket received pong")
@@ -106,7 +120,7 @@ class WebsocketManager(threading.Thread):
 
     def on_open(self, _ws):
         logging.debug("on_open")
-        self.ws_ready = True
+        self.ws_ready_event.set()
         for subscription, active_subscription in self.queued_subscriptions:
             self.subscribe(subscription, active_subscription.callback, active_subscription.subscription_id)
 
@@ -116,7 +130,7 @@ class WebsocketManager(threading.Thread):
         if subscription_id is None:
             self.subscription_id_counter += 1
             subscription_id = self.subscription_id_counter
-        if not self.ws_ready:
+        if not self.ws_ready_event.is_set():
             logging.debug("enqueueing subscription")
             self.queued_subscriptions.append((subscription, ActiveSubscription(callback, subscription_id)))
         else:
@@ -131,7 +145,7 @@ class WebsocketManager(threading.Thread):
         return subscription_id
 
     def unsubscribe(self, subscription: Subscription, subscription_id: int) -> bool:
-        if not self.ws_ready:
+        if not self.ws_ready_event.is_set():
             raise NotImplementedError("Can't unsubscribe before websocket connected")
         identifier = subscription_to_identifier(subscription)
         active_subscriptions = self.active_subscriptions[identifier]
@@ -140,3 +154,43 @@ class WebsocketManager(threading.Thread):
             self.ws.send(json.dumps({"method": "unsubscribe", "subscription": subscription}))
         self.active_subscriptions[identifier] = new_active_subscriptions
         return len(active_subscriptions) != len(new_active_subscriptions)
+
+    def post_request(self, url_path: str, payload: Any = None) -> Any:
+        """Send a POST request via websocket and wait for response"""
+        if not self.ws_ready_event.wait(timeout=30):
+            raise TimeoutError("Websocket connection timed out")
+
+        msg_id = get_timestamp_ms()
+
+        if url_path == "/exchange":
+            type = "action"
+        elif url_path == "/info":
+            type = "info"
+        else:
+            raise NotImplementedError(f"Unsupported URL path: {url_path}")
+        
+        request = {
+            "method": "post",
+            "id": msg_id,
+            "request": {
+                "type": type,
+                "payload": payload or {}
+            }
+        }
+
+        self.post_responses[msg_id] = Queue()
+        self.post_events[msg_id] = Event()
+        
+        try:
+            self.ws.send(json.dumps(request))
+            if self.post_events[msg_id].wait(timeout=30):
+                response = self.post_responses[msg_id].get()
+                if type == "info":
+                    return response["payload"]["data"]
+                elif type == "action":
+                    return response["payload"]
+            else:
+                raise TimeoutError("Websocket POST request timed out")
+        finally:
+            self.post_responses.pop(msg_id, None)
+            self.post_events.pop(msg_id, None)
